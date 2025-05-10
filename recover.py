@@ -234,72 +234,103 @@ if page == "Patient Interaction":
 elif page == "Doctor Dashboard":
     st.header("Clinical Dashboard")
     
-    # Patient selection
-    selected_patient = st.selectbox(
-        "Select Patient",
-        options=st.session_state.patients,
-        format_func=lambda x: x['name']
-    )
-    
+    # Patient selection with validation
+    try:
+        selected_patient = st.selectbox(
+            "Select Patient",
+            options=st.session_state.patients,
+            format_func=lambda x: x['name']
+        )
+    except (KeyError, TypeError):
+        st.error("Patient data corrupted. Resetting to default...")
+        st.session_state.patients = [
+            {"id": 1, "name": "Patient 1", "severity": "green"},
+            {"id": 2, "name": "Patient 2", "severity": "green"},
+            {"id": 3, "name": "Patient 3", "severity": "green"}
+        ]
+        selected_patient = st.session_state.patients[0]
+        st.rerun()
+
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("Patient Overview")
-        st.metric("Patient Name", selected_patient['name'])
-        st.metric("Current Status", selected_patient['severity'].upper())
-        
-        # Severity update
-        new_severity = st.selectbox(
-            "Update Status",
-            ["green", "yellow", "red"],
-            index=["green", "yellow", "red"].index(selected_patient['severity'])
-        )
-        if st.button("Update Status"):
-            selected_patient['severity'] = new_severity
-            st.success("Status updated!")
+        try:
+            st.metric("Patient Name", selected_patient['name'])
+            current_status = selected_patient.get('severity', 'unknown').upper()
+            st.metric("Current Status", current_status)
+        except KeyError as e:
+            st.error(f"Missing patient data field: {e}")
+
+        # Severity update with validation
+        try:
+            current_severity = selected_patient.get('severity', 'green')
+            new_severity = st.selectbox(
+                "Update Status",
+                ["green", "yellow", "red"],
+                index=["green", "yellow", "red"].index(current_severity)
+            )
+            if st.button("Update Status"):
+                selected_patient['severity'] = new_severity
+                st.success("Status updated!")
+        except ValueError:
+            st.error("Invalid status value detected")
+        except Exception as e:
+            st.error(f"Error updating status: {str(e)}")
     
     with col2:
         st.subheader("Recent Symptoms")
-        patient_conversations = [c for c in st.session_state.conversations if c['patient_id'] == selected_patient['id']]
-        
-        if patient_conversations:
-            latest_conv = max(patient_conversations, key=lambda x: x['timestamp'])
-            conv_symptoms = [s for s in st.session_state.symptoms if s['conversation_id'] == latest_conv['id']]
+        try:
+            patient_conversations = [c for c in st.session_state.conversations 
+                                   if c['patient_id'] == selected_patient['id']]
             
-            for q in KEY_QUESTIONS:
-                symptom = next((s for s in conv_symptoms if s['question'] == q['text']), None)
-                color = q['color'] if not symptom else symptom['color']
-                response = symptom['response'] if symptom else "Not reported"
-                st.markdown(
-                    f"**{q['text']}**<br>"
-                    f"<span style='color:{color}; font-size:1.2em'>{response}</span>",
-                    unsafe_allow_html=True
-                )
-        else:
-            st.info("No conversations recorded for this patient")
-
-    # Conversation history
-    st.subheader("Conversation Logs")
-    if patient_conversations:
-        selected_conv = st.selectbox(
-            "Select Conversation",
-            options=patient_conversations,
-            format_func=lambda x: datetime.fromisoformat(x['timestamp']).strftime("%Y-%m-%d %H:%M")
-        )
-        
-        # Display conversation
-        st.markdown("**Conversation Summary**")
-        st.markdown(selected_conv['summary'])
-        
-        st.markdown("**Full Transcript**")
-        messages = json.loads(selected_conv['log'])
-        for msg in messages:
-            if msg['role'] == 'assistant':
-                st.markdown(f"**Bot**: {msg['content']}")
+            if patient_conversations:
+                latest_conv = max(patient_conversations, key=lambda x: x['timestamp'])
+                conv_symptoms = [s for s in st.session_state.symptoms 
+                               if s['conversation_id'] == latest_conv['id']]
+                
+                for q in KEY_QUESTIONS:
+                    symptom = next((s for s in conv_symptoms 
+                                 if s['question'] == q['text']), None)
+                    color = q['color'] if not symptom else symptom['color']
+                    response = symptom['response'] if symptom else "Not reported"
+                    st.markdown(
+                        f"**{q['text']}**<br>"
+                        f"<span style='color:{color}; font-size:1.2em'>{response}</span>",
+                        unsafe_allow_html=True
+                    )
             else:
-                st.markdown(f"**Patient**: {msg['content']}")
-    else:
-        st.info("No conversations available for this patient")
+                st.info("No conversations recorded for this patient")
+        except KeyError as e:
+            st.error(f"Missing data field in records: {e}")
+
+    # Conversation history section
+    st.subheader("Conversation Logs")
+    try:
+        if patient_conversations:
+            selected_conv = st.selectbox(
+                "Select Conversation",
+                options=patient_conversations,
+                format_func=lambda x: datetime.fromisoformat(x['timestamp']).strftime("%Y-%m-%d %H:%M")
+            )
+            
+            # Display conversation
+            st.markdown("**Conversation Summary**")
+            st.markdown(selected_conv.get('summary', 'No summary available'))
+            
+            st.markdown("**Full Transcript**")
+            messages = json.loads(selected_conv['log'])
+            for msg in messages:
+                if msg['role'] == 'assistant':
+                    st.markdown(f"**Bot**: {msg['content']}")
+                else:
+                    st.markdown(f"**Patient**: {msg['content']}")
+        else:
+            st.info("No conversations available for this patient")
+    except json.JSONDecodeError:
+        st.error("Failed to load conversation log")
+    except Exception as e:
+        st.error(f"Error displaying conversation: {str(e)}")
 
 if __name__ == "__main__":
     st.write("Run the application with: streamlit run app.py")
