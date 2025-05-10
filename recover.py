@@ -23,6 +23,10 @@ if 'conversations' not in st.session_state:
 if 'symptoms' not in st.session_state:
     st.session_state.symptoms = []
 
+# Initialize chat history in session state
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+
 # Clinical questions
 KEY_QUESTIONS = [
     {"text": "Are you having difficulty breathing?", "likert": True, "severity": "most_severe", "color": "red"},
@@ -187,16 +191,17 @@ if page == "Patient Interaction":
         format_func=lambda x: next(p['name'] for p in st.session_state.patients if p['id'] == x)
     )
     
-    # Initialize conversation
+    # Initialize or reset conversation when patient changes
     if 'agent' not in st.session_state or st.session_state.get('patient_id') != patient_id:
         st.session_state.agent = ConversationAgent(patient_id)
         st.session_state.patient_id = patient_id
-        st.session_state.conversation_started = True
         initial_greeting = st.session_state.agent.process_response("")
         st.session_state.chat_history = [{"role": "assistant", "content": initial_greeting}]
+    elif 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
 
     # Display chat history
-    for msg in st.session_state.get('chat_history', []):
+    for msg in st.session_state.chat_history:
         if msg['role'] == 'assistant':
             st.markdown(f"**Bot**: {msg['content']}")
         else:
@@ -211,17 +216,15 @@ if page == "Patient Interaction":
             bot_response = st.session_state.agent.process_response(user_input)
             
             # Update chat history
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            st.session_state.chat_history.append({"role": "assistant", "content": bot_response})
+            st.session_state.chat_history.extend([
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": bot_response}
+            ])
             
             # Save conversation when complete
             if not st.session_state.agent.current_question:
                 conv_id = st.session_state.agent.save_conversation()
-                # Get conversation from session state
-                conversation = next(
-                    c for c in st.session_state.conversations 
-                    if c['id'] == conv_id
-                )
+                conversation = next(c for c in st.session_state.conversations if c['id'] == conv_id)
                 extract_symptoms(conv_id, conversation['log'])
                 summarize_conversation(conv_id, conversation['log'])
                 st.success("Conversation saved successfully!")
