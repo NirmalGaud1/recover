@@ -9,14 +9,19 @@ API_KEY = "AIzaSyA-9-lTQTWdNM43YdOXMQwGKDy0SrMwo6c"  # Replace with your actual 
 genai.configure(api_key=API_KEY)
 gemini_model = genai.GenerativeModel('gemini-1.5-flash')
 
-# In-memory data storage
-patients = [
-    {"id": 1, "name": "Patient 1", "severity": "green"},
-    {"id": 2, "name": "Patient 2", "severity": "green"},
-    {"id": 3, "name": "Patient 3", "severity": "green"}
-]
-conversations = []
-symptoms = []
+# Initialize session state data
+if 'patients' not in st.session_state:
+    st.session_state.patients = [
+        {"id": 1, "name": "Patient 1", "severity": "green"},
+        {"id": 2, "name": "Patient 2", "severity": "green"},
+        {"id": 3, "name": "Patient 3", "severity": "green"}
+    ]
+
+if 'conversations' not in st.session_state:
+    st.session_state.conversations = []
+
+if 'symptoms' not in st.session_state:
+    st.session_state.symptoms = []
 
 # Clinical questions
 KEY_QUESTIONS = [
@@ -26,7 +31,6 @@ KEY_QUESTIONS = [
     {"text": "Is there anything else you’d like to comment on?", "likert": False, "severity": "N/A", "color": "purple"}
 ]
 
-# System prompt
 SYSTEM_PROMPT = """
 You are RECOVER Bot, a friendly conversational agent for postoperative gastrointestinal cancer patients to report symptoms daily. Follow these steps:
 
@@ -68,7 +72,6 @@ class ConversationAgent:
     def process_response(self, user_input):
         self.history.append({"role": "user", "content": user_input})
 
-        # Update question status
         if self.current_question:
             if any(kw in user_input.lower() for kw in ['yes', 'no']) or \
                any(str(i) in user_input for i in range(1, 11)):
@@ -76,7 +79,6 @@ class ConversationAgent:
             else:
                 self.question_status[self.current_question] = 'in discussion'
 
-        # Prepare prompt
         self.current_question = self.get_next_question()
         prompt_parts = [
             self.format_prompt(),
@@ -89,7 +91,6 @@ class ConversationAgent:
         if self.current_question:
             prompt_parts.append(f"\nASSISTANT: [Next question to ask: {self.current_question}]")
 
-        # Generate response
         try:
             response = gemini_model.generate_content("\n".join(prompt_parts))
             bot_response = response.text
@@ -101,13 +102,13 @@ class ConversationAgent:
 
     def save_conversation(self):
         conversation = {
-            "id": len(conversations) + 1,
+            "id": len(st.session_state.conversations) + 1,
             "patient_id": self.patient_id,
             "timestamp": datetime.now().isoformat(),
             "log": json.dumps(self.history),
             "summary": ""
         }
-        conversations.append(conversation)
+        st.session_state.conversations.append(conversation)
         return conversation['id']
 
 def extract_symptoms(conversation_id, log):
@@ -135,7 +136,7 @@ def extract_symptoms(conversation_id, log):
         q_config = next((q for q in KEY_QUESTIONS if q['text'] == item['question']), None)
         if q_config:
             symptom = {
-                "id": len(symptoms) + 1,
+                "id": len(st.session_state.symptoms) + 1,
                 "conversation_id": conversation_id,
                 "question": item['question'],
                 "response": item.get('response', ''),
@@ -143,7 +144,7 @@ def extract_symptoms(conversation_id, log):
                 "severity": q_config['severity'],
                 "color": q_config['color']
             }
-            symptoms.append(symptom)
+            st.session_state.symptoms.append(symptom)
     return symptoms_list
 
 def summarize_conversation(conversation_id, log):
@@ -163,7 +164,7 @@ def summarize_conversation(conversation_id, log):
     except:
         summary = "Summary generation failed."
 
-    for conv in conversations:
+    for conv in st.session_state.conversations:
         if conv['id'] == conversation_id:
             conv['summary'] = summary
     return summary
@@ -182,12 +183,12 @@ if page == "Patient Interaction":
     # Patient selection
     patient_id = st.selectbox(
         "Select Patient",
-        options=[p['id'] for p in patients],
-        format_func=lambda x: next(p['name'] for p in patients if p['id'] == x)
+        options=[p['id'] for p in st.session_state.patients],
+        format_func=lambda x: next(p['name'] for p in st.session_state.patients if p['id'] == x)
     )
     
     # Initialize conversation
-    if 'agent' not in st.session_state or st.session_state.patient_id != patient_id:
+    if 'agent' not in st.session_state or st.session_state.get('patient_id') != patient_id:
         st.session_state.agent = ConversationAgent(patient_id)
         st.session_state.patient_id = patient_id
         st.session_state.conversation_started = True
@@ -216,11 +217,15 @@ if page == "Patient Interaction":
             # Save conversation when complete
             if not st.session_state.agent.current_question:
                 conv_id = st.session_state.agent.save_conversation()
-                extract_symptoms(conv_id, conversations[-1]['log'])
-                summarize_conversation(conv_id, conversations[-1]['log'])
+                # Get conversation from session state
+                conversation = next(
+                    c for c in st.session_state.conversations 
+                    if c['id'] == conv_id
+                )
+                extract_symptoms(conv_id, conversation['log'])
+                summarize_conversation(conv_id, conversation['log'])
                 st.success("Conversation saved successfully!")
             
-            # Rerun to update display
             st.rerun()
 
 elif page == "Doctor Dashboard":
@@ -229,7 +234,7 @@ elif page == "Doctor Dashboard":
     # Patient selection
     selected_patient = st.selectbox(
         "Select Patient",
-        options=patients,
+        options=st.session_state.patients,
         format_func=lambda x: x['name']
     )
     
@@ -252,11 +257,11 @@ elif page == "Doctor Dashboard":
     
     with col2:
         st.subheader("Recent Symptoms")
-        patient_conversations = [c for c in conversations if c['patient_id'] == selected_patient['id']]
+        patient_conversations = [c for c in st.session_state.conversations if c['patient_id'] == selected_patient['id']]
         
         if patient_conversations:
             latest_conv = max(patient_conversations, key=lambda x: x['timestamp'])
-            conv_symptoms = [s for s in symptoms if s['conversation_id'] == latest_conv['id']]
+            conv_symptoms = [s for s in st.session_state.symptoms if s['conversation_id'] == latest_conv['id']]
             
             for q in KEY_QUESTIONS:
                 symptom = next((s for s in conv_symptoms if s['question'] == q['text']), None)
